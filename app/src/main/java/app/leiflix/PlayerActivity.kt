@@ -78,7 +78,12 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun initializePlayer() {
-        val url = intent.getStringExtra("videoUrl") ?: return
+        // 1. Recogemos la URL que manda el intent
+        val urlRaw = intent.getStringExtra("videoUrl") ?: return
+
+        // 2. Aplicamos la lógica de #noSeek
+        val esLive = urlRaw.contains("#noSeek")
+        val url = urlRaw.replace("#noSeek", "")
 
         val headersCapturados = recogerHeaders()
 
@@ -139,7 +144,9 @@ class PlayerActivity : AppCompatActivity() {
                 setMediaSource(mediaSource)
                 prepare()
 
-                if (lastPosition > 0) seekTo(lastPosition)
+                // Si es LIVE, no hacemos seek a la posición anterior
+                if (!esLive && lastPosition > 0) seekTo(lastPosition)
+                
                 playWhenReady = true
 
                 addListener(object : Player.Listener {
@@ -171,7 +178,8 @@ class PlayerActivity : AppCompatActivity() {
                         if (state == Player.STATE_READY) {
                             playerView.requestFocus()
 
-                            if (!seekInicialHecho) {
+                            // Si es LIVE, no intentamos ir al segundo 0 (deja que cargue el directo)
+                            if (!seekInicialHecho && !esLive) {
                                 seekInicialHecho = true
                                 seekTo(0)
                             }
