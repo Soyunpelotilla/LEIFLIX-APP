@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name" translatable="false">LEIFLIX</string>
+    <string name="loading_stream" translatable="false">Obteniendo stream…</string>
+    <string name="loading_stream_subtitle" translatable="false">Esto puede tardar unos segundos.\nSi no te funciona usa una VPN.</string>
+</resources>
