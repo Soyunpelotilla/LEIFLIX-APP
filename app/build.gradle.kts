@@ -51,6 +51,9 @@ dependencies {
     // 🔥 NECESARIO para reproducir .m3u8 (HLS)
     implementation("androidx.media3:media3-exoplayer-hls:1.9.0")
 
+    // 🔥 NECESARIO para reproducir .mpd (DASH)
+    implementation("androidx.media3:media3-exoplayer-dash:1.9.0")
+
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
