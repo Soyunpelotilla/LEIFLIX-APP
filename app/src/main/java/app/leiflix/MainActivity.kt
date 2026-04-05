@@ -233,7 +233,7 @@ class MainActivity : AppCompatActivity() {
                 streamYaCapturado = false
                 Toast.makeText(this, "No se pudo obtener el stream", Toast.LENGTH_LONG).show()
             }
-        }, 15_000)
+        }, 30_000)
 
         CookieManager.getInstance().setAcceptCookie(true)
 
@@ -319,6 +319,15 @@ class MainActivity : AppCompatActivity() {
         if (url.contains(".mpd")) return true
         if (url.endsWith(".ts")) return true
         if (url.contains("/play/")) return true
+        if (url.contains("chunklist")) return true
+        if (url.contains("/hls/")) return true
+        if (url.contains("/dash/")) return true
+        if (url.contains("manifest.f4m")) return true
+        if (url.contains("index.m3u")) return true
+        if (url.contains("playlist.m3u")) return true
+        if (url.contains("stream.php")) return true
+        if (url.contains("getstream")) return true
+        if (url.contains("livestream")) return true
         if (Regex(".*/live/[^/]+/[^/]+/.*\\.ts$").containsMatchIn(url)) return true
         if (Regex(".*/live/[^/]+/[^/]+/\\d+.*").containsMatchIn(url)) return true
         if (Regex(".*/movie/[^/]+/[^/]+/\\d+.*").containsMatchIn(url)) return true
