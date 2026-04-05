@@ -125,11 +125,12 @@ class PlayerActivity : AppCompatActivity() {
     // ──────────────────────────────────────────────
     private fun buildClearKeyDrmManager(kidHex: String, keyHex: String): DefaultDrmSessionManager {
         val psshJson = """{"keys":[{"kty":"oct","kid":"${hexToBase64Url(kidHex)}","k":"${hexToBase64Url(keyHex)}"}],"type":"temporary"}"""
-        val drmCallback = LocalMediaDrmCallback(psshJson.toByteArray())
+        val drmCallback = LocalMediaDrmCallback(psshJson.toByteArray(Charsets.UTF_8))
         return DefaultDrmSessionManager.Builder()
             .setUuidAndExoMediaDrmProvider(C.CLEARKEY_UUID, FrameworkMediaDrm.DEFAULT_PROVIDER)
-            .setPlayClearSamplesWithoutKeys(true)
+            .setPlayClearSamplesWithoutKeys(false)
             .setMultiSession(false)
+            .setKeyRequestParameters(mapOf("Content-Type" to "application/json"))
             .build(drmCallback)
     }
 
@@ -193,9 +194,17 @@ class PlayerActivity : AppCompatActivity() {
         val mediaSource = when {
             tieneDrm -> {
                 val drmManager = buildClearKeyDrmManager(kidHex, keyHex)
+                val mediaItem = MediaItem.Builder()
+                    .setUri(url)
+                    .setDrmConfiguration(
+                        MediaItem.DrmConfiguration.Builder(C.CLEARKEY_UUID)
+                            .setMultiSession(false)
+                            .build()
+                    )
+                    .build()
                 DashMediaSource.Factory(dataSourceFactory)
                     .setDrmSessionManagerProvider { drmManager }
-                    .createMediaSource(MediaItem.fromUri(url))
+                    .createMediaSource(mediaItem)
             }
             esStreamDash(url) -> {
                 DashMediaSource.Factory(dataSourceFactory)
