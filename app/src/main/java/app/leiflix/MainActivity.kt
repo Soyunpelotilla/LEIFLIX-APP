@@ -13,6 +13,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.Window
 import android.webkit.CookieManager
+import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
@@ -80,7 +81,6 @@ class MainActivity : AppCompatActivity() {
 
         val isTv = packageManager.hasSystemFeature("android.software.leanback")
 
-        // Fondo redondeado del dialog
         val bgShape = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
             cornerRadius = 48f
@@ -88,7 +88,6 @@ class MainActivity : AppCompatActivity() {
             setStroke(2, "#2a3a50".toColorInt())
         }
 
-        // Spinner
         val spinnerSize = if (isTv) 128 else 96
         val spinner = ProgressBar(this).apply {
             isIndeterminate = true
@@ -100,7 +99,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Texto principal
         val textoPrincipal = TextView(this).apply {
             setText(R.string.loading_stream)
             setTextColor("#58a6ff".toColorInt())
@@ -116,7 +114,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Subtexto
         val textoSecundario = TextView(this).apply {
             setText(R.string.loading_stream_subtitle)
             setTextColor("#8b949e".toColorInt())
@@ -131,7 +128,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Contenedor principal
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
@@ -189,6 +185,9 @@ class MainActivity : AppCompatActivity() {
         settings.mediaPlaybackRequiresUserGesture = false
         settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
 
+        // ── Bridge nativo para canales DASH+DRM desde la web ──
+        webView.addJavascriptInterface(LeiflixBridge(), "LeiflixApp")
+
         webView.webViewClient = LeiflixClient()
 
         webView.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
@@ -203,7 +202,19 @@ class MainActivity : AppCompatActivity() {
     }
 
     // -----------------------------------------------------------------------
-    // Lanza un WebView invisible para cazar el .m3u8 de una página embed
+    // Bridge JS → nativo: la web llama a LeiflixApp.reproducir(url, kid, key)
+    // -----------------------------------------------------------------------
+    inner class LeiflixBridge {
+        @JavascriptInterface
+        fun reproducir(url: String, kid: String, key: String) {
+            runOnUiThread {
+                lanzarPlayer(url, emptyMap(), kid, key)
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Lanza un WebView invisible para cazar el stream de una página embed
     // -----------------------------------------------------------------------
     @SuppressLint("SetJavaScriptEnabled")
     private fun lanzarEmbedInterceptor(embedUrl: String) {
@@ -214,7 +225,6 @@ class MainActivity : AppCompatActivity() {
 
         mostrarLoading()
 
-        // Timeout: ocultar loading si no se captura stream en 10 segundos
         android.os.Handler(mainLooper).postDelayed({
             if (!streamYaCapturado) {
                 ocultarLoading()
@@ -282,23 +292,31 @@ class MainActivity : AppCompatActivity() {
     }
 
     // -----------------------------------------------------------------------
-    // Lanza PlayerActivity con la URL y los headers capturados
+    // Lanza PlayerActivity con la URL, headers y claves DRM opcionales
     // -----------------------------------------------------------------------
-    private fun lanzarPlayer(url: String, headers: Map<String, String> = emptyMap()) {
+    private fun lanzarPlayer(
+        url: String,
+        headers: Map<String, String> = emptyMap(),
+        kid: String = "",
+        key: String = ""
+    ) {
         val intent = Intent(this@MainActivity, PlayerActivity::class.java).apply {
             putExtra("videoUrl", url)
-            headers.forEach { (key, value) ->
-                putExtra("header_$key", value)
+            if (kid.isNotEmpty()) putExtra("kid", kid)
+            if (key.isNotEmpty()) putExtra("key", key)
+            headers.forEach { (k, v) ->
+                putExtra("header_$k", v)
             }
         }
         startActivity(intent)
     }
 
     // -----------------------------------------------------------------------
-    // Detecta si una URL es un stream de video
+    // Detecta si una URL es un stream de video (incluye DASH .mpd)
     // -----------------------------------------------------------------------
     private fun esUrlStream(url: String): Boolean {
         if (url.contains(".m3u8") || url.contains(".m3u")) return true
+        if (url.contains(".mpd")) return true
         if (url.endsWith(".ts")) return true
         if (url.contains("/play/")) return true
         if (Regex(".*/live/[^/]+/[^/]+/.*\\.ts$").containsMatchIn(url)) return true
@@ -368,6 +386,7 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 esUrlStream(url) -> {
+                    // Los .mpd sin DRM también se capturan aquí (sin kid/key)
                     lanzarPlayer(url)
                     true
                 }
