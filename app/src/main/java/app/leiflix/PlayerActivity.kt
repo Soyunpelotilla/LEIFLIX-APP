@@ -2,6 +2,7 @@
 
 package app.leiflix
 
+import android.graphics.Color
 import android.os.Bundle
 import android.util.Base64
 import android.view.WindowManager
@@ -16,9 +17,13 @@ import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.dash.DashMediaSource
+import androidx.media3.exoplayer.drm.DefaultDrmSessionManager
+import androidx.media3.exoplayer.drm.FrameworkMediaDrm
+import androidx.media3.exoplayer.drm.LocalMediaDrmCallback
 import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
+import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import java.io.IOException
 
@@ -28,6 +33,9 @@ class PlayerActivity : AppCompatActivity() {
     private lateinit var playerView: PlayerView
     private var lastPosition: Long = 0L
     private var seekInicialHecho = false
+
+    // Zoom: cicla entre fit → zoom → fill
+    private var currentResizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
 
     private val userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
             "AppleWebKit/537.36 (KHTML, like Gecko) " +
@@ -48,6 +56,13 @@ class PlayerActivity : AppCompatActivity() {
         }
 
         playerView = findViewById(R.id.player_view)
+
+        // Zoom con long press
+        playerView.setOnLongClickListener {
+            toggleZoom()
+            true
+        }
+
         initializePlayer()
 
         onBackPressedDispatcher.addCallback(this) {
@@ -57,7 +72,19 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     // ──────────────────────────────────────────────
-    // Recoge headers extra del Intent (header_X-Something → X-Something)
+    // Zoom: fit → zoom → fill → fit …
+    // ──────────────────────────────────────────────
+    private fun toggleZoom() {
+        currentResizeMode = when (currentResizeMode) {
+            AspectRatioFrameLayout.RESIZE_MODE_FIT  -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+            AspectRatioFrameLayout.RESIZE_MODE_ZOOM -> AspectRatioFrameLayout.RESIZE_MODE_FILL
+            else                                    -> AspectRatioFrameLayout.RESIZE_MODE_FIT
+        }
+        playerView.resizeMode = currentResizeMode
+    }
+
+    // ──────────────────────────────────────────────
+    // Recoge headers extra del Intent
     // ──────────────────────────────────────────────
     private fun recogerHeaders(): Map<String, String> {
         val headers = mutableMapOf<String, String>()
@@ -76,54 +103,34 @@ class PlayerActivity : AppCompatActivity() {
     // ──────────────────────────────────────────────
     // Detectores de tipo de stream
     // ──────────────────────────────────────────────
-    private fun esStreamHls(url: String): Boolean {
-        return url.contains(".m3u8") ||
-                url.contains(".m3u") ||
-                url.contains("playlist") ||
-                url.contains("/live/") ||
-                url.contains("/movie/") ||
-                url.contains("/series/")
-    }
+    private fun esStreamHls(url: String) =
+        url.contains(".m3u8") || url.contains(".m3u") ||
+        url.contains("playlist") || url.contains("/live/") ||
+        url.contains("/movie/") || url.contains("/series/")
 
-    private fun esStreamDash(url: String): Boolean {
-        return url.contains(".mpd")
-    }
+    private fun esStreamDash(url: String) = url.contains(".mpd")
 
     // ──────────────────────────────────────────────
-    // Convierte HEX → Base64URL (necesario para ClearKey DRM)
+    // Hex → Base64URL (para construir el JSON ClearKey)
     // ──────────────────────────────────────────────
     private fun hexToBase64Url(hex: String): String {
         val bytes = ByteArray(hex.length / 2) {
             hex.substring(it * 2, it * 2 + 2).toInt(16).toByte()
         }
-        return Base64.encodeToString(bytes, Base64.NO_WRAP or Base64.URL_SAFE)
-            .trimEnd('=')
+        return Base64.encodeToString(bytes, Base64.NO_WRAP or Base64.URL_SAFE).trimEnd('=')
     }
 
     // ──────────────────────────────────────────────
-    // Construye el MediaItem con o sin DRM
+    // DRM ClearKey via LocalMediaDrmCallback (robusto, sin pantalla negra)
     // ──────────────────────────────────────────────
-    private fun buildMediaItem(url: String, kidHex: String?, keyHex: String?): MediaItem {
-        return if (esStreamDash(url) && !kidHex.isNullOrEmpty() && !keyHex.isNullOrEmpty()) {
-            // DASH + ClearKey DRM
-            val licenseJson = """
-                {"keys":[{"kty":"oct","kid":"${hexToBase64Url(kidHex)}","k":"${hexToBase64Url(keyHex)}"}],"type":"temporary"}
-            """.trimIndent()
-            val licenseUri = "data:application/json;base64," +
-                    Base64.encodeToString(licenseJson.toByteArray(), Base64.NO_WRAP)
-
-            MediaItem.Builder()
-                .setUri(url)
-                .setDrmConfiguration(
-                    MediaItem.DrmConfiguration.Builder(C.CLEARKEY_UUID)
-                        .setLicenseUri(licenseUri)
-                        .build()
-                )
-                .build()
-        } else {
-            // Sin DRM
-            MediaItem.fromUri(url)
-        }
+    private fun buildClearKeyDrmManager(kidHex: String, keyHex: String): DefaultDrmSessionManager {
+        val psshJson = """{"keys":[{"kty":"oct","kid":"${hexToBase64Url(kidHex)}","k":"${hexToBase64Url(keyHex)}"}],"type":"temporary"}"""
+        val drmCallback = LocalMediaDrmCallback(psshJson.toByteArray())
+        return DefaultDrmSessionManager.Builder()
+            .setUuidAndExoMediaDrmProvider(C.CLEARKEY_UUID, FrameworkMediaDrm.DEFAULT_PROVIDER)
+            .setPlayClearSamplesWithoutKeys(true)
+            .setMultiSession(false)
+            .build(drmCallback)
     }
 
     // ──────────────────────────────────────────────
@@ -131,19 +138,17 @@ class PlayerActivity : AppCompatActivity() {
     // ──────────────────────────────────────────────
     private fun initializePlayer() {
         val urlRaw = intent.getStringExtra("videoUrl") ?: return
-        val esLive = urlRaw.contains("#noSeek")
-        val url = urlRaw.replace("#noSeek", "")
+        val esLive  = urlRaw.contains("#noSeek")
+        val url     = urlRaw.replace("#noSeek", "")
 
-        // Claves DRM opcionales
-        val kidHex = intent.getStringExtra("kid")
-        val keyHex = intent.getStringExtra("key")
+        val kidHex   = intent.getStringExtra("kid") ?: ""
+        val keyHex   = intent.getStringExtra("key") ?: ""
+        val tieneDrm = esStreamDash(url) && kidHex.isNotEmpty() && keyHex.isNotEmpty()
 
         val headersCapturados = recogerHeaders()
 
         val trackSelector = DefaultTrackSelector(this).apply {
-            setParameters(
-                buildUponParameters().setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
-            )
+            setParameters(buildUponParameters().setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true))
         }
 
         val loadControl = DefaultLoadControl.Builder()
@@ -164,24 +169,6 @@ class PlayerActivity : AppCompatActivity() {
                 .setReadTimeoutMs(15_000)
                 .setDefaultRequestProperties(headersCapturados)
 
-        // Construye el MediaSource según el tipo de stream
-        fun crearMediaSource(targetUrl: String = url, forzarHls: Boolean = false, forzarProgressive: Boolean = false) =
-            when {
-                !forzarHls && !forzarProgressive && esStreamDash(targetUrl) -> {
-                    DashMediaSource.Factory(dataSourceFactory)
-                        .createMediaSource(buildMediaItem(targetUrl, kidHex, keyHex))
-                }
-                !forzarProgressive && (forzarHls || esStreamHls(targetUrl)) -> {
-                    HlsMediaSource.Factory(dataSourceFactory)
-                        .setAllowChunklessPreparation(true)
-                        .createMediaSource(buildMediaItem(targetUrl, null, null))
-                }
-                else -> {
-                    ProgressiveMediaSource.Factory(dataSourceFactory)
-                        .createMediaSource(buildMediaItem(targetUrl, null, null))
-                }
-            }
-
         player = ExoPlayer.Builder(this)
             .setTrackSelector(trackSelector)
             .setLoadControl(loadControl)
@@ -193,51 +180,79 @@ class PlayerActivity : AppCompatActivity() {
                     )
                     .setEnableDecoderFallback(true)
             )
-            .build().apply {
-                playerView.player = this
-                playerView.controllerAutoShow = false
-                playerView.controllerShowTimeoutMs = 3000
-                playerView.hideController()
-                playerView.requestFocus()
+            .build()
 
-                videoScalingMode = C.VIDEO_SCALING_MODE_SCALE_TO_FIT
+        playerView.player = player
+        playerView.controllerAutoShow = false
+        playerView.controllerShowTimeoutMs = 3000
+        playerView.hideController()
+        playerView.requestFocus()
+        playerView.keepScreenOn = true
+        playerView.setShutterBackgroundColor(Color.TRANSPARENT)
 
-                setMediaSource(crearMediaSource())
-                prepare()
-
-                if (!esLive && lastPosition > 0) seekTo(lastPosition)
-                playWhenReady = true
-
-                addListener(object : Player.Listener {
-
-                    // Fallback: si falla, prueba con el otro formato
-                    override fun onPlayerError(error: PlaybackException) {
-                        val fallback = when {
-                            esStreamDash(url) -> crearMediaSource(forzarHls = true)
-                            esStreamHls(url)  -> crearMediaSource(forzarProgressive = true)
-                            else              -> crearMediaSource(forzarHls = true)
-                        }
-                        val delay = if (error.cause is IOException) 2000L else 0L
-                        playerView.postDelayed({
-                            if (player != null) {
-                                setMediaSource(fallback)
-                                prepare()
-                                play()
-                            }
-                        }, delay)
-                    }
-
-                    override fun onPlaybackStateChanged(state: Int) {
-                        if (state == Player.STATE_READY) {
-                            playerView.requestFocus()
-                            if (!seekInicialHecho && !esLive) {
-                                seekInicialHecho = true
-                                seekTo(0)
-                            }
-                        }
-                    }
-                })
+        val mediaSource = when {
+            tieneDrm -> {
+                val drmManager = buildClearKeyDrmManager(kidHex, keyHex)
+                DashMediaSource.Factory(dataSourceFactory)
+                    .setDrmSessionManagerProvider { drmManager }
+                    .createMediaSource(MediaItem.fromUri(url))
             }
+            esStreamDash(url) -> {
+                DashMediaSource.Factory(dataSourceFactory)
+                    .createMediaSource(MediaItem.fromUri(url))
+            }
+            esStreamHls(url) -> {
+                HlsMediaSource.Factory(dataSourceFactory)
+                    .setAllowChunklessPreparation(true)
+                    .createMediaSource(MediaItem.fromUri(url))
+            }
+            else -> {
+                ProgressiveMediaSource.Factory(dataSourceFactory)
+                    .createMediaSource(MediaItem.fromUri(url))
+            }
+        }
+
+        player!!.apply {
+            setMediaSource(mediaSource)
+            prepare()
+            if (!esLive && lastPosition > 0) seekTo(lastPosition)
+            playWhenReady = true
+
+            addListener(object : Player.Listener {
+
+                override fun onPlayerError(error: PlaybackException) {
+                    if (tieneDrm) return
+                    val fallback = when {
+                        esStreamDash(url) -> HlsMediaSource.Factory(dataSourceFactory)
+                            .setAllowChunklessPreparation(true)
+                            .createMediaSource(MediaItem.fromUri(url))
+                        esStreamHls(url) -> ProgressiveMediaSource.Factory(dataSourceFactory)
+                            .createMediaSource(MediaItem.fromUri(url))
+                        else -> HlsMediaSource.Factory(dataSourceFactory)
+                            .setAllowChunklessPreparation(true)
+                            .createMediaSource(MediaItem.fromUri(url))
+                    }
+                    val delay = if (error.cause is IOException) 2000L else 0L
+                    playerView.postDelayed({
+                        if (player != null) {
+                            setMediaSource(fallback)
+                            prepare()
+                            play()
+                        }
+                    }, delay)
+                }
+
+                override fun onPlaybackStateChanged(state: Int) {
+                    if (state == Player.STATE_READY) {
+                        playerView.requestFocus()
+                        if (!seekInicialHecho && !esLive) {
+                            seekInicialHecho = true
+                            seekTo(0)
+                        }
+                    }
+                }
+            })
+        }
     }
 
     // ──────────────────────────────────────────────
@@ -262,6 +277,11 @@ class PlayerActivity : AppCompatActivity() {
             lastPosition = it.currentPosition
             it.pause()
         }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        releasePlayer()
     }
 
     override fun onDestroy() {
