@@ -127,10 +127,10 @@ class PlayerActivity : AppCompatActivity() {
         val psshJson = """{"keys":[{"kty":"oct","kid":"${hexToBase64Url(kidHex)}","k":"${hexToBase64Url(keyHex)}"}],"type":"temporary"}"""
         val drmCallback = LocalMediaDrmCallback(psshJson.toByteArray(Charsets.UTF_8))
         return DefaultDrmSessionManager.Builder()
+            .setPlayClearSamplesWithoutKeys(true)
+            .setMultiSession(true)
+            .setKeyRequestParameters(HashMap())
             .setUuidAndExoMediaDrmProvider(C.CLEARKEY_UUID, FrameworkMediaDrm.DEFAULT_PROVIDER)
-            .setPlayClearSamplesWithoutKeys(false)
-            .setMultiSession(false)
-            .setKeyRequestParameters(mapOf("Content-Type" to "application/json"))
             .build(drmCallback)
     }
 
@@ -196,13 +196,9 @@ class PlayerActivity : AppCompatActivity() {
                 val drmManager = buildClearKeyDrmManager(kidHex, keyHex)
                 val mediaItem = MediaItem.Builder()
                     .setUri(url)
-                    .setDrmConfiguration(
-                        MediaItem.DrmConfiguration.Builder(C.CLEARKEY_UUID)
-                            .setMultiSession(false)
-                            .build()
-                    )
+                    .setMimeType("application/dash+xml")
                     .build()
-                DashMediaSource.Factory(dataSourceFactory)
+                androidx.media3.exoplayer.source.DefaultMediaSourceFactory(dataSourceFactory)
                     .setDrmSessionManagerProvider { drmManager }
                     .createMediaSource(mediaItem)
             }
